@@ -1,0 +1,334 @@
+---
+title: "pbmc3k notebook"
+output: html_notebook
+---
+```{r, echo=F,mesage=F, warning=FALSE}
+#setwd("C:/Users/DELL/Desktop/Git_scudo/single_cell/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices")
+library(dplyr)
+library(Seurat)
+library(patchwork)
+
+# Load the PBMC dataset
+pbmc.data <- Read10X(data.dir="C:/Users/User/Desktop/scudo/scudo/pbmc3k_filtered_gene_bc_matrices/hg19")
+
+# Initialize the Seurat object with the raw (non-normalized data).
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200)
+pbmc
+# Load the CSV (assuming it's like your previous file)
+# Step 1: Read in the CSV
+
+
+
+```
+```{r}
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+mito_genes <- grep("^MT-", rownames(pbmc), value = TRUE)
+ercc<- grep("^ERCC-", rownames(pbmc), value = TRUE)
+
+
+#pbmc$percent_mito <- PercentageFeatureSet(single_cell, pattern = "^MT-")
+
+# Combine into one dataframe for plotting
+qc_metrics <- pbmc[[]]
+
+# Plot mitochondrial and ERCC percentages
+library(patchwork)
+library(ggplot2)
+
+mito_plot <- ggplot(qc_metrics, aes(x = percent.mt)) +
+  geom_histogram(binwidth = 1, fill = "skyblue", color = "black") +
+  geom_vline(xintercept = 5, color = "red", linetype = "dashed") +
+  labs(title = "Mitochondrial % Distribution", x = "Percent Mito", y = "Cell Count") +
+  theme_minimal()
+
+
+mito_plot
+
+vln <- VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA","percent_mito"), pt.size = 0.2)
+vln
+#pbmc <- subset(
+ # pbmc,
+  #subset = 
+   # nFeature_RNA > 200 &         # Remove cells with too few genes
+  #  nFeature_RNA < 6000 &        # Remove cells with too many genes (potential doublets)
+   # percent_mito <=5            # Remove cells with high ERCC (adjust based on data)
+#)
+vln <- VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA","percent_mito"), pt.size = 0.2)
+vln
+
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+```
+```{r}
+
+# 2700 2638
+
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+# Step 1: Read the file with no name mangling
+annotated_data <- read.csv("expression_with_annotations.csv", row.names = 1, check.names = FALSE)
+
+# Step 2: Fix column names to match pbmc
+colnames(annotated_data) <- gsub("\\.", "-", colnames(annotated_data))
+
+# Step 3: Extract the last row (cell types)
+cell_types <- as.character(annotated_data[nrow(annotated_data), ])
+names(cell_types) <- colnames(annotated_data)
+
+# Step 4: Match to pbmc column order
+cell_types <- cell_types[colnames(pbmc)]
+
+# Step 5: Add to metadata and assign identities
+cell_types_df <- data.frame(celltype = cell_types, row.names = colnames(pbmc))
+pbmc <- AddMetaData(pbmc, metadata = cell_types_df)
+Idents(pbmc) <- "celltype"
+
+#pbmc_temp<- pbmc
+```
+Normalization and variable features
+```{r}
+pbmc <- NormalizeData(pbmc)
+pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(pbmc), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(pbmc)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot2
+#plot1 + plot2
+```
+Scaling and dimensionality reduction
+```{r,echo=FALSE}
+all.genes <- rownames(pbmc)
+pbmc <- ScaleData(pbmc, features = all.genes)
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+#pbmc <- RunPCA(pbmc, features = all.genes)
+DimPlot(pbmc)
+
+ElbowPlot(pbmc, ndims = 50)
+```
+Clustering (idents) and visualization
+```{r,echo=FALSE}
+library(Seurat)
+pbmc <- FindNeighbors(pbmc,dims=1:10)
+pbmc <- FindClusters(pbmc,resolution=0.5)
+pbmc <- RunUMAP(pbmc,dims=1:10)
+```
+```{r, echo=FALSE}
+DimPlot(pbmc, reduction = "umap")
+
+```
+ANNOTATION
+```{r, echo=FALSE}
+library(Seurat)
+new.cluster.ids <- c("Naive CD4 T", "CD14+ Mono", "Memory CD4 T", "B", "CD8 T", "FCGR3A+ Mono","NK", "DC", "Platelet")
+names(new.cluster.ids) <- levels(pbmc)
+pbmc <- RenameIdents(pbmc, new.cluster.ids)
+DimPlot(pbmc, reduction = "umap", label = TRUE, pt.size = 0.5) + NoLegend()
+```
+
+```{r, echo=FALSE}
+library(cellmarkeraccordion)
+library(Seurat)
+data_acc<- accordion(pbmc, assay ="RNA", species ="Human", tissue="blood", annotation_resolution = "cluster", max_n_marker = 30, include_detailed_annotation_info = TRUE, plot = TRUE)
+DimPlot(data_acc, group.by = "accordion_per_cluster")
+```
+
+```{r, echo=FALSE}
+library(ggplot2)
+VizDimLoadings(pbmc, dims = 1:2, reduction = "pca")
+plot <- DimPlot(pbmc, reduction = "umap", label = TRUE, label.size = 4.5) + xlab("UMAP 1") + ylab("UMAP 2") +
+    theme(axis.title = element_text(size = 18), legend.text = element_text(size = 18)) + guides(colour = guide_legend(override.aes = list(size = 10)))
+plot
+```
+```{r}
+top_acc_markers<- data_acc@misc[["accordion"]][["cluster_resolution"]][["detailed_annotation_info"]][["top_markers_per_celltype_cluster"]]$marker
+
+```
+Accordian Evaluation
+```{r,echo=F}
+acc_mark<-data_acc@misc[["accordion"]][["cluster_resolution"]][["detailed_annotation_info"]][["top_celltypes_plot"]][["global"]]
+features <- read.delim("C:/Users/User/Desktop/scudo/scudo/output_scudo_biomarker.txt", header = TRUE, sep = "\t")
+feature_ids <- features$Feature.ID
+intersect(acc_mark,feature_ids)
+
+```
+```{r}
+data_acc@misc[["accordion"]][["cluster_resolution"]][["detailed_annotation_info"]][["top_markers_per_celltype_cluster_plot"]][["global"]]
+# In R
+
+
+```
+generate csv files
+```{r}
+expr_matrix <- as.matrix(GetAssayData(pbmc, assay = "RNA", slot = "data"))
+# 2. Extract cell annotations
+cell_annotations <- as.character(Idents(pbmc))  # or pbmc$cell_type if you've renamed it
+
+# 3. Add annotation as a new row to the matrix
+# Must ensure matching column names
+names(cell_annotations) <- colnames(expr_matrix)
+
+# 4. Bind the annotation as a new row (requires character conversion)
+expr_with_annotation <- rbind(expr_matrix, cell_type = cell_annotations)
+
+# 5. Save to CSV
+write.csv(expr_with_annotation, file = "expression_with_annotations_normalized.csv")
+```
+```{r}
+# display number of cells in each cluster
+
+library(Seurat)
+library(tidyverse)
+library(dplyr)
+cluster_counts <- table(pbmc$seurat_clusters)
+cluster_df <- as.data.frame(cluster_counts)
+colnames(cluster_df) <- c("Cluster", "Cell_Count")
+# Add cell type info from Idents into the metadata
+pbmc$cell_type <- Idents(pbmc)
+
+head(pbmc@meta.data$seurat_clusters)
+# Count number of cells per cluster and cell type
+cluster_type_counts <- pbmc@meta.data %>%
+  count(seurat_clusters, cell_type) %>%
+    dplyr::rename(
+    Cluster = seurat_clusters,
+    CellType = cell_type,
+    Count = n
+  )
+ 
+
+# Bar plot: stacked bar chart of cell type composition per cluster
+ggplot(cluster_type_counts, aes(x = as.factor(Cluster), y = Count, fill = CellType)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Cell Type Composition per Cluster",
+       x = "Cluster",
+       y = "Number of Cells") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+cluster_type_counts
+
+```
+Find Markers
+```{r}
+library(Seurat)
+markers <- FindAllMarkers(
+  pbmc,
+  assay = "RNA",          # Use the SCT assay
+  slot = "data",          # Use normalized data (log-transformed corrected counts)
+  test.use = "wilcox",    # Wilcoxon rank-sum test
+  only.pos = TRUE,        # Only return positive markers
+  min.pct = 0.25,        # Gene must be detected in at least 25% of cells in either cluster
+  logfc.threshold = 0.25, # Minimum log2 fold change
+  verbose = FALSE
+)
+```
+HEATMAP
+```{r, echo=FALSE}
+# Select top 10 markers per cluster based on avg_log2FC
+top_markers <- markers %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 10)
+
+# Draw heatmap with those genes
+DoHeatmap(
+  object = pbmc,
+  features = unique(top_markers$gene),
+  group.by = "seurat_clusters"
+) +
+  ggtitle("Top 10 Marker Genes per Cluster")
+```
+```{r View top markers, echo = FALSE}
+# View the top 5 markers for each cluster
+top_markers <- markers %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 5) %>%
+  ungroup()
+# Display the top markers
+#top_markers <- top_markers %>%
+ # arrange(cluster, desc(avg_log2FC))
+#scatter
+scatter <- FeaturePlot(pbmc, features = top_markers$gene[1:10], ncol = 5) &
+  theme(axis.text = element_blank(), axis.ticks = element_blank(), axis.title = element_blank())
+top_markers
+scatter
+```
+Cluster Markers
+```{r, echo=FALSE}
+
+cluster_markers <- FindMarkers(
+  object = pbmc,
+  ident.1 = "Naive CD4 T",            # Cluster 0
+  ident.2 = "Memory CD4 T",            # Cluster 1
+  assay = "RNA",            # Or "SCT" if SCTransform was used
+  slot = "data",            # Use normalized data
+  min.pct = 0.25,
+  logfc.threshold = 0.25,
+  test.use = "wilcox"
+)
+```
+```{r, echo=FALSE}
+library(ggrepel)
+ 
+# Add gene names and significance status
+cluster_markers$gene <- rownames(cluster_markers)
+cluster_markers$significance <- "Not Significant"
+
+# Define thresholds
+logfc_cutoff <- 0.25
+pval_cutoff <- 0.05
+
+cluster_markers$significance[cluster_markers$avg_log2FC > logfc_cutoff & cluster_markers$p_val_adj < pval_cutoff] <- "Up in NAIVE CD4 T"
+cluster_markers$significance[cluster_markers$avg_log2FC < -logfc_cutoff & cluster_markers$p_val_adj < pval_cutoff] <- "Up in Memory CD4 T"
+
+# Subset genes to label (adjust n as needed)
+top_genes_to_label <- cluster_markers %>%
+  filter(significance != "Not Significant") %>%
+  arrange(p_val_adj) %>%
+  slice_head(n = 10)
+
+# Volcano plot with labels
+ggplot(cluster_markers, aes(x = avg_log2FC, y = -log10(p_val_adj), color = significance)) +
+  geom_point(alpha = 0.6, size = 1.5) +
+  scale_color_manual(values = c("Up in NAIVE CD4 T" = "red", "Up in Memory CD4 T" = "blue", "Not Significant" = "gray")) +
+  geom_vline(xintercept = c(-logfc_cutoff, logfc_cutoff), linetype = "dashed", color = "black") +
+  geom_hline(yintercept = -log10(pval_cutoff), linetype = "dashed", color = "black") +
+  geom_text_repel(
+    data = top_genes_to_label,
+    aes(label = gene),
+    size = 3,
+    max.overlaps = 50
+  ) +
+  labs(title = "Volcano Plot: Cluster NAIVE CD4 T vs Memory CD4 T",
+       x = "Average Log2 Fold Change",
+       y = "-Log10 Adjusted p-value",
+       color = "Expression") +
+  theme_minimal()
+
+```
+HEATMAP
+```{r}
+# Step 1: Subset top genes from your DE result
+top_genes <- cluster_markers %>%
+  filter(significance != "Not Significant") %>%
+  arrange(p_val_adj) %>%
+  slice_head(n = 20) %>%
+  pull(gene)
+
+# Step 2: Subset only the two clusters (e.g., 0 and 2)
+pbmc_subset <- subset(pbmc, idents = c('Naive CD4 T', 'Memory CD4 T'))
+
+# Step 3: Create heatmap
+DoHeatmap(
+  pbmc_subset,
+  features = top_genes,
+  group.by = "seurat_clusters"
+) +
+  ggtitle("Heatmap of Top Markers: NAIVE CD4 T vs Memory CD4 T")
+
+```
